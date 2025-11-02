@@ -1,19 +1,6 @@
-# ProbIoU-Sliced
-A Computer Vision project for efficient GPU-friendly computation of Probabilistic IoU (ProbIoU) used in object detection. Implements sliced (shard-based) batch processing to handle massive bounding boxes without GPU memory overflow.
-
-## Introduction
-
-Traditional CNN-based object detection does not directly produce the final result; instead, it generates many detection boxes and then performs Non-Maximum Suppression (NMS) to select the box with the highest confidence score. However, conventional object detection only uses fixed-axis rectangular boxes, while objects in images are not always aligned perfectly horizontally or vertically. To detect objects more precisely, we use **OBB (Oriented Bounding Box)**, which allows the bounding boxes to rotate by introducing an additional rotation angle.  
-So, how is NMS performed for OBBs? Please refer to the paper: [https://arxiv.org/pdf/2106.06072v1](https://arxiv.org/pdf/2106.06072v1)
-
-I found in some GitHub issues that when training with OBBs, the process can sometimes run **out of CUDA memory**, even with a very small batch size—and interestingly, this often happens during the **validation stage**. This is curious because there’s enough memory during training, yet not during validation. I suspected that OBB NMS might also consume GPU memory. After checking YOLO’s code (a state-of-the-art CNN model) and running some tests, it indeed appears that during validation, OBB NMS combined with computing the similarity to ground truth boxes can lead to excessive memory use when too many boxes are generated, causing CUDA memory overflow.
-
-## Solution
-
-The NMS method for OBBs is called **probiou**, derived from the previously mentioned paper. I located the function `batch_probiou` and found that it takes in both a **prediction matrix** and a **ground truth matrix**. During validation, these two matrices can become very large, which leads to **CUDA memory overflow**.
-
-
-``` python
+"""
+python3.11/site-packages/ultralytics/utils/metrics.py
+"""
 
 def batch_probiou_original(obb1: torch.Tensor | np.ndarray, obb2: torch.Tensor | np.ndarray, eps: float = 1e-7) -> torch.Tensor:
     """
@@ -50,13 +37,6 @@ def batch_probiou_original(obb1: torch.Tensor | np.ndarray, obb2: torch.Tensor |
     bd = (t1 + t2 + t3).clamp(eps, 100.0)
     hd = (1.0 - (-bd).exp() + eps).sqrt()
     return 1 - hd
-
-```
-
-Computing **t1** consumes an enormous amount of GPU memory. After applying a common optimization, I was able to resolve this issue—namely, **slicing** (aka **micro-batching**):
-
-
-``` python
 
 def batch_probiou(obb1: torch.Tensor | np.ndarray, obb2: torch.Tensor | np.ndarray, eps: float = 1e-7, batch_size : int =1000) -> torch.Tensor:
     """
@@ -149,26 +129,3 @@ def _compute_probiou_single_batch(obb1, obb2, eps=1e-7):
     bd = (t1 + t2 + t3).clamp(eps, 100.0)
     hd = (1.0 - (-bd).exp() + eps).sqrt()
     return 1 - hd
-
-```
-
-The new function also includes a block used to verify whether the computation results are correct.
-
-## Conclusion
-
-In fact, this method of splitting matrices to reduce memory consumption is quite common, especially in optimization processes for **LLM (Large Language Model)** inference.
-
-
-## License
-This project is licensed under **AGPL-3.0**.  
-If you use or host this software as a network service, you must provide the complete corresponding source code to users, including your modifications.
-
-See [`LICENSE`](./LICENSE) for the full text and [`NOTICE`](./NOTICE) for attributions.
-
-## Attribution
-This repository includes code derived from **Ultralytics YOLO** (AGPL-3.0).  
-- Upstream: https://github.com/ultralytics/ultralytics
-- Key changes: sliced (shard-based) ProbIoU computation to reduce GPU memory, refactored `batch_probiou` utilities, tests and docs.
-
-> For closed-source or internal commercial use without AGPL obligations, obtain an **Enterprise License** from Ultralytics.  
-> See: https://www.ultralytics.com/license
